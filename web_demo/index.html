@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Touchless Smart Mirror Web Controller</title>
+  <style>
+    :root {
+      --bg: #0c0d12;
+      --card-bg: rgba(22, 24, 34, 0.75);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --accent: #00e5ff;
+      --accent-glow: rgba(0, 229, 255, 0.4);
+      --text: #f0f2f5;
+      --text-muted: #8c93a4;
+      --success: #00ff88;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background: radial-gradient(circle at 50% 20%, #171b26 0%, var(--bg) 80%);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+      user-select: none;
+    }
+
+    /* Virtual Hand Cursor */
+    #gesture-cursor {
+      position: fixed;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid var(--accent);
+      background: radial-gradient(circle, rgba(0, 229, 255, 0.6) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 9999;
+      transform: translate(-50%, -50%);
+      transition: width 0.15s, height 0.15s, background-color 0.15s, border-color 0.15s;
+      box-shadow: 0 0 16px var(--accent-glow);
+      display: none;
+    }
+
+    #gesture-cursor.pinching {
+      width: 18px;
+      height: 18px;
+      border-color: #ff9100;
+      background: #ff9100;
+      box-shadow: 0 0 20px rgba(255, 145, 0, 0.8);
+    }
+
+    #gesture-cursor.holding {
+      width: 36px;
+      height: 36px;
+      border-color: var(--success);
+      box-shadow: 0 0 24px rgba(0, 255, 136, 0.8);
+    }
+
+    /* Header Nav */
+    header {
+      padding: 24px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--card-border);
+      backdrop-filter: blur(12px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, #00e5ff, #7000ff);
+      color: #000;
+      font-weight: 800;
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      letter-spacing: 1px;
+    }
+
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.5px;
+    }
+
+    .ws-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      padding: 6px 14px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff3b30;
+      box-shadow: 0 0 8px #ff3b30;
+    }
+
+    .status-dot.connected {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    /* Main Container */
+    main {
+      max-width: 1200px;
+      margin: 40px auto;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 32px;
+    }
+
+    /* Showcase Section */
+    .showcase {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Category Pill Selector */
+    .categories {
+      display: flex;
+      gap: 12px;
+      overflow-x: auto;
+      padding-bottom: 6px;
+    }
+
+    .category-btn {
+      padding: 10px 22px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      border-radius: 30px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      white-space: nowrap;
+    }
+
+    .category-btn.active, .category-btn:hover {
+      background: var(--accent);
+      color: #000;
+      border-color: var(--accent);
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+
+    /* Carousel Card */
+    .product-stage {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 24px;
+      padding: 40px;
+      position: relative;
+      overflow: hidden;
+      backdrop-filter: blur(16px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      min-height: 460px;
+      justify-content: center;
+    }
+
+    .product-preview {
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, rgba(0, 229, 255, 0.2) 0%, rgba(20, 20, 30, 0.8) 70%);
+      border: 2px dashed rgba(0, 229, 255, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 72px;
+      margin-bottom: 28px;
+      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    .product-preview.drag-active {
+      transform: scale(1.08) rotate(15deg);
+      border-color: var(--accent);
+      box-shadow: 0 0 30px var(--accent-glow);
+    }
+
+    .product-title {
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .product-meta {
+      color: var(--text-muted);
+      font-size: 15px;
+      margin-bottom: 24px;
+    }
+
+    .product-actions {
+      display: flex;
+      gap: 16px;
+    }
+
+    .btn {
+      padding: 12px 28px;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #00e5ff, #0099ff);
+      color: #000;
+      box-shadow: 0 4px 16px var(--accent-glow);
+    }
+
+    .btn-primary:hover, .btn-primary.hovered {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px var(--accent-glow);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+      border: 1px solid var(--card-border);
+    }
+
+    .btn-secondary:hover, .btn-secondary.hovered {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    /* Swipe Overlay Arrows */
+    .nav-arrow {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .nav-arrow.left { left: 24px; }
+    .nav-arrow.right { right: 24px; }
+
+    .nav-arrow:hover, .nav-arrow.triggered {
+      background: var(--accent);
+      color: #000;
+      box-shadow: 0 0 16px var(--accent-glow);
+    }
+
+    /* Sidebar / Log */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 18px;
+      padding: 20px;
+      backdrop-filter: blur(12px);
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .gesture-indicator {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 64px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 12px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.5px;
+      border: 1px solid rgba(0, 229, 255, 0.2);
+      transition: all 0.2s;
+    }
+
+    .gesture-indicator.active {
+      background: rgba(0, 229, 255, 0.15);
+      border-color: var(--accent);
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+
+    .log-stream {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      height: 260px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 12px;
+    }
+
+    .log-item {
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 6px;
+      border-left: 3px solid var(--accent);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .log-item.click { border-left-color: #ff9100; }
+    .log-item.swipe { border-left-color: #00e5ff; }
+    .log-item.drag { border-left-color: #7000ff; }
+    .log-item.hold { border-left-color: var(--success); }
+
+    /* Instructions */
+    .hints-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .hint-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .hint-key {
+      padding: 3px 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      font-weight: 600;
+      color: var(--text);
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Virtual Floating Cursor -->
+  <div id="gesture-cursor"></div>
+
+  <header>
+    <div class="brand">
+      <span class="brand-badge">TOUCHLESS WEB</span>
+      <h1>Gesture Mirror Interface</h1>
+    </div>
+    <div class="ws-status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Connecting to ws://127.0.0.1:8765...</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="showcase">
+      <!-- Category Tabs (Swiped with SWIPE_UP / SWIPE_DOWN) -->
+      <div class="categories" id="category-bar">
+        <button class="category-btn active" data-cat="0">All Tops</button>
+        <button class="category-btn" data-cat="1">Jackets</button>
+        <button class="category-btn" data-cat="2">Knitwear</button>
+        <button class="category-btn" data-cat="3">Bottoms</button>
+        <button class="category-btn" data-cat="4">Dresses</button>
+      </div>
+
+      <!-- Main Interactive Product Stage -->
+      <div class="product-stage" id="stage">
+        <div class="nav-arrow left" id="arrow-left" onclick="prevProduct()">←</div>
+        <div class="nav-arrow right" id="arrow-right" onclick="nextProduct()">→</div>
+
+        <div class="product-preview" id="product-icon">🧥</div>
+        <h2 class="product-title" id="product-name">Wool Overshirt</h2>
+        <p class="product-meta" id="product-meta">Charcoal Grey • 100% Merino • $185</p>
+
+        <div class="product-actions">
+          <button class="btn btn-primary" id="btn-tryon" onclick="handleAction('Virtual Try-On Triggered')">Try On Mirror</button>
+          <button class="btn btn-secondary" id="btn-color" onclick="cycleColor()">Change Color</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Side Diagnostics & Live Event Feed -->
+    <aside class="sidebar">
+      <div class="card">
+        <div class="card-title">
+          <span>Active Gesture</span>
+          <span id="fsm-state" style="color: var(--accent); font-size: 11px;">IDLE</span>
+        </div>
+        <div class="gesture-indicator" id="gesture-banner">READY FOR GESTURES</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Live Event Stream</div>
+        <div class="log-stream" id="log-stream">
+          <div class="log-item"><span>Waiting for Python Bridge...</span><span>--</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Gesture Shortcuts</div>
+        <div class="hints-list">
+          <div class="hint-row"><span class="hint-key">Pinch & Release</span><span>Click buttons or tabs</span></div>
+          <div class="hint-row"><span class="hint-key">Swipe Left/Right</span><span>Previous / Next product</span></div>
+          <div class="hint-row"><span class="hint-key">Scroll Up/Down</span><span>Change active category</span></div>
+          <div class="hint-row"><span class="hint-key">Pinch & Drag</span><span>Rotate 3D model</span></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    // Product Catalog Mock
+    const PRODUCTS = [
+      { icon: "🧥", name: "Wool Overshirt", meta: "Charcoal Grey • 100% Merino • $185" },
+      { icon: "🥋", name: "Structured Blazer", meta: "Midnight Blue • Italian Wool • $295" },
+      { icon: "🧶", name: "Chunky Knit Cardigan", meta: "Oatmeal Beige • Soft Cashmere • $220" },
+      { icon: "👖", name: "Pleated Trousers", meta: "Olive Drab • Tailored Relaxed • $165" },
+      { icon: "👗", name: "Pleated Midi Dress", meta: "Emerald Forest • Silk Twill • $280" },
+    ];
+    let currentIndex = 0;
+    let currentCategory = 0;
+    let rotationDeg = 0;
+
+    const cursor = document.getElementById("gesture-cursor");
+    const statusDot = document.getElementById("status-dot");
+    const statusText = document.getElementById("status-text");
+    const banner = document.getElementById("gesture-banner");
+    const logStream = document.getElementById("log-stream");
+    const stateEl = document.getElementById("fsm-state");
+    const previewEl = document.getElementById("product-icon");
+
+    function updateProduct() {
+      const p = PRODUCTS[currentIndex];
+      document.getElementById("product-icon").textContent = p.icon;
+      document.getElementById("product-name").textContent = p.name;
+      document.getElementById("product-meta").textContent = p.meta;
+    }
+
+    function nextProduct() {
+      currentIndex = (currentIndex + 1) % PRODUCTS.length;
+      updateProduct();
+      highlightArrow("arrow-right");
+    }
+
+    function prevProduct() {
+      currentIndex = (currentIndex - 1 + PRODUCTS.length) % PRODUCTS.length;
+      updateProduct();
+      highlightArrow("arrow-left");
+    }
+
+    function setCategory(idx) {
+      currentCategory = (idx + 5) % 5;
+      const btns = document.querySelectorAll(".category-btn");
+      btns.forEach((b, i) => b.classList.toggle("active", i === currentCategory));
+    }
+
+    function highlightArrow(id) {
+      const el = document.getElementById(id);
+      if (el) {
+        el.classList.add("triggered");
+        setTimeout(() => el.classList.remove("triggered"), 350);
+      }
+    }
+
+    function cycleColor() {
+      const colors = ["#00e5ff", "#ff0077", "#00ff88", "#ff9100", "#7000ff"];
+      const nextColor = colors[Math.floor(Math.random() * colors.length)];
+      previewEl.style.borderColor = nextColor;
+      previewEl.style.boxShadow = `0 0 30px ${nextColor}88`;
+      bannerNotice("Color Changed");
+    }
+
+    function bannerNotice(text, color = "var(--accent)") {
+      banner.textContent = text;
+      banner.style.color = color;
+      banner.classList.add("active");
+      setTimeout(() => banner.classList.remove("active"), 800);
+    }
+
+    function appendLog(action, detail, type = "") {
+      const item = document.createElement("div");
+      item.className = `log-item ${type}`;
+      const now = new Date().toLocaleTimeString().split(" ")[0];
+      item.innerHTML = `<span><b>${action}</b> ${detail || ""}</span><span>${now}</span>`;
+      logStream.insertBefore(item, logStream.firstChild);
+      if (logStream.children.length > 25) logStream.removeChild(logStream.lastChild);
+    }
+
+    function handleAction(text) {
+      bannerNotice(text, "#00ff88");
+      appendLog("CLICK", text, "click");
+    }
+
+    // Connect to Python WebSocket Bridge (ws://127.0.0.1:8765)
+    let ws = null;
+    function connectBridge() {
+      ws = new WebSocket("ws://127.0.0.1:8765");
+
+      ws.onopen = () => {
+        statusDot.classList.add("connected");
+        statusText.textContent = "Live: ws://127.0.0.1:8765";
+        cursor.style.display = "block";
+        appendLog("CONNECTED", "Python Gesture Bridge Ready", "hold");
+      };
+
+      ws.onclose = () => {
+        statusDot.classList.remove("connected");
+        statusText.textContent = "Reconnecting to ws://127.0.0.1:8765...";
+        cursor.style.display = "none";
+        setTimeout(connectBridge, 2000);
+      };
+
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+
+          // Continuous Cursor Position Update
+          if (data.type === "cursor") {
+            const screenX = data.cursor.x * window.innerWidth;
+            const screenY = data.cursor.y * window.innerHeight;
+            cursor.style.left = `${screenX}px`;
+            cursor.style.top = `${screenY}px`;
+
+            stateEl.textContent = data.state;
+            cursor.classList.toggle("pinching", data.pinch_ratio < 0.28);
+            cursor.classList.toggle("holding", data.state === "HOLD");
+
+            // Element Hover Detection
+            const target = document.elementFromPoint(screenX, screenY);
+            document.querySelectorAll(".hovered").forEach(el => el.classList.remove("hovered"));
+            if (target && (target.classList.contains("btn") || target.classList.contains("category-btn"))) {
+              target.classList.add("hovered");
+            }
+          }
+
+          // Discrete Gesture Actions
+          if (data.type === "gesture") {
+            const act = data.action;
+            bannerNotice(act);
+
+            if (act === "SWIPE_LEFT") {
+              nextProduct();
+              appendLog("SWIPE_LEFT", "Next garment", "swipe");
+            } else if (act === "SWIPE_RIGHT") {
+              prevProduct();
+              appendLog("SWIPE_RIGHT", "Previous garment", "swipe");
+            } else if (act === "SWIPE_DOWN") {
+              setCategory(currentCategory + 1);
+              appendLog("SWIPE_DOWN", "Next category", "swipe");
+            } else if (act === "SWIPE_UP") {
+              setCategory(currentCategory - 1);
+              appendLog("SWIPE_UP", "Previous category", "swipe");
+            } else if (act === "CLICK") {
+              const screenX = data.cursor.x * window.innerWidth;
+              const screenY = data.cursor.y * window.innerHeight;
+              const target = document.elementFromPoint(screenX, screenY);
+              if (target && typeof target.click === "function") {
+                target.click();
+              }
+              appendLog("CLICK", `Triggered at (${Math.round(screenX)}, ${Math.round(screenY)})`, "click");
+            } else if (act === "DRAG_MOVE") {
+              rotationDeg = (rotationDeg + 8) % 360;
+              previewEl.style.transform = `scale(1.08) rotate(${rotationDeg}deg)`;
+              previewEl.classList.add("drag-active");
+              appendLog("DRAG_MOVE", `Rot: ${rotationDeg}°`, "drag");
+            } else if (act === "DRAG_END") {
+              previewEl.classList.remove("drag-active");
+            }
+          }
+        } catch (err) {
+          console.error("WS parse error:", err);
+        }
+      };
+    }
+
+    connectBridge();
+  </script>
+</body>
+</html>
