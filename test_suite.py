@@ -837,5 +837,54 @@ class TestIndexPointingSwipe(unittest.TestCase):
         self.assertEqual(events, [], f"Switching hand shape mid-stroke falsely fired a swipe: {events}")
 
 
+    def test_distant_hand_pinch_and_swipe(self) -> None:
+        """
+        Validate that a hand standing far from the camera (small palm_scale ~ 0.025-0.035)
+        reliably registers both pinches and directional swipes.
+        """
+        self.fsm.reset()
+        t = 200.0
+        dt = 1.0 / 30.0
+        distant_palm_len = 0.030  # Small palm representing user standing 2.5 - 3.5m away
+
+        # Test distant swipe right
+        swipe_events = []
+        for i in range(8):
+            t += dt
+            x = 0.35 + (0.07 * (i / 7.0))
+            lms = pointing_hand((x, 0.50), palm_len=distant_palm_len)
+            ev = self.fsm.update(lms, t)
+            if ev.action:
+                swipe_events.append(ev.action)
+
+        self.assertIn("SWIPE_RIGHT", swipe_events, "Distant hand failed to trigger SWIPE_RIGHT!")
+
+        # Advance time past cooldown
+        t += 1.0
+        self.fsm.reset()
+
+        # Test distant pinch click
+        # 1. Hover
+        lms_hover = pointing_hand((0.50, 0.50), palm_len=distant_palm_len)
+        ev = self.fsm.update(lms_hover, t)
+        self.assertEqual(ev.state, "HOVER")
+
+        # 2. Pinch engage: transition fingers together into a pinch
+        for _ in range(self.fsm.pinch_confirm_frames + 4):
+            t += dt
+            lms_pinch = create_hand_landmarks(wrist_xy=(0.50, 0.50), palm_len=distant_palm_len, pinch_ratio=0.10)
+            ev = self.fsm.update(lms_pinch, t)
+        self.assertEqual(ev.state, "PINCH_PENDING", "Distant hand failed to engage PINCH_PENDING!")
+
+        # 3. Release within click window (4 frames for filter to open past release threshold)
+        for _ in range(4):
+            t += dt
+            lms_open = create_hand_landmarks(wrist_xy=(0.50, 0.50), palm_len=distant_palm_len, pinch_ratio=0.70)
+            ev = self.fsm.update(lms_open, t)
+            if ev.action == "CLICK":
+                break
+        self.assertEqual(ev.action, "CLICK", "Distant hand failed to trigger CLICK on release!")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Touchless Smart Mirror Web Controller</title>
+  <!-- MediaPipe dependencies loaded client-side via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <!-- Zero-Training In-Browser Kinematic Gesture Engine -->
+  <script src="./gesture-engine.js"></script>
+
   <style>
     :root {
       --bg: #0c0d12;
@@ -14,6 +20,8 @@
       --text: #f0f2f5;
       --text-muted: #8c93a4;
       --success: #00ff88;
+      --warning: #ff9100;
+      --danger: #ff3b30;
     }
 
     * {
@@ -42,7 +50,7 @@
       pointer-events: none;
       z-index: 9999;
       transform: translate(-50%, -50%);
-      transition: width 0.15s, height 0.15s, background-color 0.15s, border-color 0.15s;
+      transition: width 0.12s, height 0.12s, background-color 0.12s, border-color 0.12s;
       box-shadow: 0 0 16px var(--accent-glow);
       display: none;
     }
@@ -55,21 +63,16 @@
       box-shadow: 0 0 20px rgba(255, 145, 0, 0.8);
     }
 
-    #gesture-cursor.holding {
-      width: 36px;
-      height: 36px;
-      border-color: var(--success);
-      box-shadow: 0 0 24px rgba(0, 255, 136, 0.8);
-    }
-
     /* Header Nav */
     header {
-      padding: 24px 40px;
+      padding: 20px 40px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       border-bottom: 1px solid var(--card-border);
       backdrop-filter: blur(12px);
+      flex-wrap: wrap;
+      gap: 16px;
     }
 
     .brand {
@@ -94,7 +97,41 @@
       letter-spacing: -0.5px;
     }
 
-    .ws-status {
+    /* Mode Selector Controls */
+    .controls-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .mode-toggle {
+      display: flex;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 3px;
+      gap: 4px;
+    }
+
+    .mode-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 16px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .mode-btn.active {
+      background: var(--accent);
+      color: #000;
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    .engine-status {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -111,6 +148,7 @@
       border-radius: 50%;
       background: #ff3b30;
       box-shadow: 0 0 8px #ff3b30;
+      transition: all 0.3s;
     }
 
     .status-dot.connected {
@@ -118,14 +156,73 @@
       box-shadow: 0 0 8px var(--success);
     }
 
+    .status-dot.loading {
+      background: var(--warning);
+      box-shadow: 0 0 8px var(--warning);
+      animation: pulse 1s infinite alternate;
+    }
+
+    @keyframes pulse {
+      from { opacity: 0.4; }
+      to { opacity: 1; }
+    }
+
+    /* Camera Start Banner */
+    .camera-prompt-banner {
+      background: linear-gradient(90deg, rgba(0, 229, 255, 0.15), rgba(112, 0, 255, 0.15));
+      border: 1px solid var(--accent);
+      border-radius: 14px;
+      padding: 14px 24px;
+      margin: 24px auto 0 auto;
+      max-width: 1200px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .camera-prompt-banner.hidden {
+      display: none;
+    }
+
+    .banner-text {
+      font-size: 14px;
+    }
+
+    .banner-text b {
+      color: var(--accent);
+    }
+
+    .btn-camera-start {
+      background: var(--accent);
+      color: #000;
+      font-weight: 700;
+      padding: 10px 20px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 0 16px var(--accent-glow);
+      transition: transform 0.15s;
+    }
+
+    .btn-camera-start:hover {
+      transform: scale(1.04);
+    }
+
     /* Main Container */
     main {
       max-width: 1200px;
-      margin: 40px auto;
+      margin: 30px auto;
       padding: 0 24px;
       display: grid;
       grid-template-columns: 1fr 340px;
       gap: 32px;
+    }
+
+    @media (max-width: 900px) {
+      main {
+        grid-template-columns: 1fr;
+      }
     }
 
     /* Showcase Section */
@@ -180,63 +277,108 @@
       justify-content: center;
     }
 
-    .product-preview {
-      width: 220px;
-      height: 220px;
+    .product-stage::before {
+      content: "";
+      position: absolute;
+      width: 250px;
+      height: 250px;
+      background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .nav-arrow {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 48px;
+      height: 48px;
       border-radius: 50%;
-      background: radial-gradient(circle at 35% 35%, rgba(0, 229, 255, 0.2) 0%, rgba(20, 20, 30, 0.8) 70%);
-      border: 2px dashed rgba(0, 229, 255, 0.4);
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--card-border);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 72px;
-      margin-bottom: 28px;
-      transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+      cursor: pointer;
+      font-size: 20px;
+      transition: all 0.2s ease;
+      z-index: 2;
+    }
+
+    .nav-arrow:hover, .nav-arrow.triggered {
+      background: var(--accent);
+      color: #000;
+      box-shadow: 0 0 16px var(--accent-glow);
+      transform: translateY(-50%) scale(1.15);
+    }
+
+    .nav-arrow.left { left: 24px; }
+    .nav-arrow.right { right: 24px; }
+
+    .product-preview {
+      width: 220px;
+      height: 220px;
+      border-radius: 20px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 2px dashed rgba(255, 255, 255, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 80px;
+      margin-bottom: 24px;
+      z-index: 1;
+      transition: transform 0.15s cubic-bezier(0.1, 0.9, 0.2, 1), box-shadow 0.25s ease;
+      cursor: grab;
     }
 
     .product-preview.drag-active {
-      transform: scale(1.08) rotate(15deg);
+      cursor: grabbing;
       border-color: var(--accent);
-      box-shadow: 0 0 30px var(--accent-glow);
+      box-shadow: 0 0 35px var(--accent-glow);
     }
 
     .product-title {
-      font-size: 26px;
+      font-size: 28px;
       font-weight: 700;
       margin-bottom: 8px;
+      z-index: 1;
     }
 
     .product-meta {
-      color: var(--text-muted);
       font-size: 15px;
-      margin-bottom: 24px;
+      color: var(--text-muted);
+      margin-bottom: 28px;
+      z-index: 1;
     }
 
     .product-actions {
       display: flex;
       gap: 16px;
+      z-index: 1;
     }
 
     .btn {
-      padding: 12px 28px;
-      border-radius: 12px;
+      padding: 14px 28px;
+      border-radius: 14px;
       font-size: 15px;
       font-weight: 600;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: all 0.25s ease;
       border: none;
     }
 
     .btn-primary {
-      background: linear-gradient(135deg, #00e5ff, #0099ff);
+      background: var(--accent);
       color: #000;
-      box-shadow: 0 4px 16px var(--accent-glow);
+      box-shadow: 0 0 20px var(--accent-glow);
     }
 
     .btn-primary:hover, .btn-primary.hovered {
       transform: translateY(-2px);
-      box-shadow: 0 8px 24px var(--accent-glow);
+      box-shadow: 0 0 30px var(--accent);
     }
 
     .btn-secondary {
@@ -247,37 +389,10 @@
 
     .btn-secondary:hover, .btn-secondary.hovered {
       background: rgba(255, 255, 255, 0.15);
+      border-color: rgba(255, 255, 255, 0.3);
     }
 
-    /* Swipe Overlay Arrows */
-    .nav-arrow {
-      position: absolute;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid var(--card-border);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 20px;
-      color: var(--text);
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .nav-arrow.left { left: 24px; }
-    .nav-arrow.right { right: 24px; }
-
-    .nav-arrow:hover, .nav-arrow.triggered {
-      background: var(--accent);
-      color: #000;
-      box-shadow: 0 0 16px var(--accent-glow);
-    }
-
-    /* Sidebar / Log */
+    /* Diagnostics Sidebar */
     .sidebar {
       display: flex;
       flex-direction: column;
@@ -287,18 +402,18 @@
     .card {
       background: var(--card-bg);
       border: 1px solid var(--card-border);
-      border-radius: 18px;
-      padding: 20px;
-      backdrop-filter: blur(12px);
+      border-radius: 20px;
+      padding: 24px;
+      backdrop-filter: blur(16px);
     }
 
     .card-title {
       font-size: 13px;
       font-weight: 700;
-      letter-spacing: 0.8px;
+      letter-spacing: 0.5px;
       text-transform: uppercase;
       color: var(--text-muted);
-      margin-bottom: 14px;
+      margin-bottom: 16px;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -308,46 +423,57 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      height: 64px;
+      padding: 16px;
       background: rgba(0, 0, 0, 0.3);
       border-radius: 12px;
+      border: 1px solid var(--card-border);
       font-size: 18px;
       font-weight: 700;
       color: var(--accent);
-      letter-spacing: 0.5px;
-      border: 1px solid rgba(0, 229, 255, 0.2);
-      transition: all 0.2s;
+      letter-spacing: 1px;
+      min-height: 60px;
+      text-align: center;
+      transition: all 0.2s ease;
     }
 
     .gesture-indicator.active {
-      background: rgba(0, 229, 255, 0.15);
       border-color: var(--accent);
       box-shadow: 0 0 20px var(--accent-glow);
+      background: rgba(0, 229, 255, 0.1);
     }
 
     .log-stream {
       display: flex;
       flex-direction: column;
       gap: 8px;
-      height: 260px;
+      max-height: 180px;
       overflow-y: auto;
-      font-family: monospace;
-      font-size: 12px;
+      padding-right: 4px;
+    }
+
+    .log-stream::-webkit-scrollbar {
+      width: 4px;
+    }
+    .log-stream::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
     }
 
     .log-item {
-      padding: 6px 10px;
-      background: rgba(255, 255, 255, 0.04);
-      border-radius: 6px;
-      border-left: 3px solid var(--accent);
+      font-size: 12px;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border-left: 3px solid var(--card-border);
+      border-radius: 4px;
       display: flex;
       justify-content: space-between;
+      color: var(--text-muted);
     }
 
-    .log-item.click { border-left-color: #ff9100; }
-    .log-item.swipe { border-left-color: #00e5ff; }
-    .log-item.drag { border-left-color: #7000ff; }
-    .log-item.hold { border-left-color: var(--success); }
+    .log-item.click { border-left-color: #ff9100; color: #fff; }
+    .log-item.swipe { border-left-color: var(--accent); color: #fff; }
+    .log-item.drag { border-left-color: #7000ff; color: #fff; }
+    .log-item.hold { border-left-color: var(--success); color: #fff; }
 
     /* Instructions */
     .hints-list {
@@ -371,34 +497,129 @@
       font-weight: 600;
       color: var(--text);
       font-size: 11px;
+      min-width: 95px;
+      text-align: center;
+    }
+
+    /* Picture-in-Picture Webcam Monitor */
+    .pip-camera-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      width: 220px;
+      height: 165px;
+      background: #000;
+      border: 2px solid var(--card-border);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+      z-index: 999;
+      transition: all 0.3s ease;
+    }
+
+    .pip-camera-container.collapsed {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    .pip-camera-container.collapsed canvas {
+      display: none;
+    }
+
+    .pip-toggle-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: rgba(0, 0, 0, 0.6);
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 22px;
+      height: 22px;
+      font-size: 11px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    #preview-canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .pip-placeholder {
+      display: none;
+      width: 100%;
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    .pip-camera-container.collapsed .pip-placeholder {
+      display: flex;
     }
   </style>
 </head>
 <body>
 
-  <!-- Virtual Floating Cursor -->
+  <!-- Virtual Floating Hand Cursor -->
   <div id="gesture-cursor"></div>
+
+  <!-- Picture-in-Picture Camera & Hand Skeleton Preview -->
+  <div class="pip-camera-container" id="pip-container">
+    <button class="pip-toggle-btn" id="pip-toggle" onclick="togglePip()">−</button>
+    <canvas id="preview-canvas" width="320" height="240"></canvas>
+    <div class="pip-placeholder">📷</div>
+  </div>
 
   <header>
     <div class="brand">
       <span class="brand-badge">TOUCHLESS WEB</span>
-      <h1>Gesture Mirror Interface</h1>
+      <h1>Zero-Setup Gesture Controller</h1>
     </div>
-    <div class="ws-status">
-      <div class="status-dot" id="status-dot"></div>
-      <span id="status-text">Connecting to ws://127.0.0.1:8765...</span>
+
+    <div class="controls-group">
+      <!-- Mode Toggle -->
+      <div class="mode-toggle">
+        <button class="mode-btn active" id="btn-mode-browser" onclick="switchMode('browser')">🚀 Browser Direct (Wasm)</button>
+        <button class="mode-btn" id="btn-mode-ws" onclick="switchMode('ws')">🔌 Python Bridge (WS)</button>
+      </div>
+
+      <!-- Auto-Zoom Hand Lock Toggle -->
+      <button class="mode-btn active" id="btn-autozoom" onclick="toggleAutoZoom()" style="border: 1px solid var(--accent); background: rgba(0, 229, 255, 0.15); color: #00e5ff;">🎯 Hand Lock: ON</button>
+
+      <!-- Engine Status Indicator -->
+      <div class="engine-status">
+        <div class="status-dot loading" id="status-dot"></div>
+        <span id="status-text">Ready to launch</span>
+      </div>
     </div>
   </header>
+
+  <!-- Browser Camera Start Banner (Only in Browser Direct Mode) -->
+  <div class="camera-prompt-banner" id="camera-banner">
+    <div class="banner-text">
+      <b>🚀 Instant In-Browser Gestures:</b> No installation required! The MediaPipe model (~2MB) runs 100% inside your browser cache.
+    </div>
+    <button class="btn-camera-start" id="btn-start-camera" onclick="startBrowserGestures()">Start Camera Gestures</button>
+  </div>
 
   <main>
     <section class="showcase">
       <!-- Category Tabs (Swiped with SWIPE_UP / SWIPE_DOWN) -->
       <div class="categories" id="category-bar">
-        <button class="category-btn active" data-cat="0">All Tops</button>
-        <button class="category-btn" data-cat="1">Jackets</button>
-        <button class="category-btn" data-cat="2">Knitwear</button>
-        <button class="category-btn" data-cat="3">Bottoms</button>
-        <button class="category-btn" data-cat="4">Dresses</button>
+        <button class="category-btn active" data-cat="0" onclick="setCategory(0)">All Tops</button>
+        <button class="category-btn" data-cat="1" onclick="setCategory(1)">Jackets</button>
+        <button class="category-btn" data-cat="2" onclick="setCategory(2)">Knitwear</button>
+        <button class="category-btn" data-cat="3" onclick="setCategory(3)">Bottoms</button>
+        <button class="category-btn" data-cat="4" onclick="setCategory(4)">Dresses</button>
       </div>
 
       <!-- Main Interactive Product Stage -->
@@ -430,17 +651,18 @@
       <div class="card">
         <div class="card-title">Live Event Stream</div>
         <div class="log-stream" id="log-stream">
-          <div class="log-item"><span>Waiting for Python Bridge...</span><span>--</span></div>
+          <div class="log-item"><span>Initializing client controller...</span><span>--</span></div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-title">Gesture Shortcuts</div>
+        <div class="card-title">Active Gestures</div>
         <div class="hints-list">
+          <div class="hint-row"><span class="hint-key">Cursor Movement</span><span>Track index fingertip smoothly</span></div>
           <div class="hint-row"><span class="hint-key">Pinch & Release</span><span>Click buttons or tabs</span></div>
-          <div class="hint-row"><span class="hint-key">Swipe Left/Right</span><span>Previous / Next product</span></div>
-          <div class="hint-row"><span class="hint-key">Scroll Up/Down</span><span>Change active category</span></div>
-          <div class="hint-row"><span class="hint-key">Pinch & Drag</span><span>Rotate 3D model</span></div>
+          <div class="hint-row"><span class="hint-key">Swipe Left / Right</span><span>Previous / Next product</span></div>
+          <div class="hint-row"><span class="hint-key">Scroll Up / Down</span><span>Change active category</span></div>
+          <div class="hint-row"><span class="hint-key">Thumbs Up (👍)</span><span>Like & Confirm item</span></div>
         </div>
       </div>
     </aside>
@@ -458,6 +680,7 @@
     let currentIndex = 0;
     let currentCategory = 0;
     let rotationDeg = 0;
+    let activeMode = "browser"; // "browser" or "ws"
 
     const cursor = document.getElementById("gesture-cursor");
     const statusDot = document.getElementById("status-dot");
@@ -466,6 +689,18 @@
     const logStream = document.getElementById("log-stream");
     const stateEl = document.getElementById("fsm-state");
     const previewEl = document.getElementById("product-icon");
+    const cameraBanner = document.getElementById("camera-banner");
+    const previewCanvas = document.getElementById("preview-canvas");
+    const pipContainer = document.getElementById("pip-container");
+
+    let browserController = null;
+    let ws = null;
+
+    function togglePip() {
+      pipContainer.classList.toggle("collapsed");
+      const btn = document.getElementById("pip-toggle");
+      btn.textContent = pipContainer.classList.contains("collapsed") ? "+" : "−";
+    }
 
     function updateProduct() {
       const p = PRODUCTS[currentIndex];
@@ -529,89 +764,190 @@
       appendLog("CLICK", text, "click");
     }
 
-    // Connect to Python WebSocket Bridge (ws://127.0.0.1:8765)
-    let ws = null;
-    function connectBridge() {
+    function handleGestureAction(act, cursorCoords) {
+      bannerNotice(act);
+
+      if (act === "SWIPE_LEFT") {
+        nextProduct();
+        appendLog("SWIPE_LEFT", "Next garment", "swipe");
+      } else if (act === "SWIPE_RIGHT") {
+        prevProduct();
+        appendLog("SWIPE_RIGHT", "Previous garment", "swipe");
+      } else if (act === "SWIPE_DOWN") {
+        setCategory(currentCategory + 1);
+        appendLog("SWIPE_DOWN", "Next category", "swipe");
+      } else if (act === "SWIPE_UP") {
+        setCategory(currentCategory - 1);
+        appendLog("SWIPE_UP", "Previous category", "swipe");
+      } else if (act === "CLICK") {
+        const screenX = cursorCoords.x * window.innerWidth;
+        const screenY = cursorCoords.y * window.innerHeight;
+        const target = document.elementFromPoint(screenX, screenY);
+        if (target && typeof target.click === "function") {
+          target.click();
+        }
+        appendLog("CLICK", `Triggered at (${Math.round(screenX)}, ${Math.round(screenY)})`, "click");
+      } else if (act === "THUMBS_UP") {
+        bannerNotice("👍 THUMBS UP!", "#00ff88");
+        appendLog("THUMBS_UP", "Liked garment / Confirmed", "click");
+        // Visual celebratory confirmation animation
+        previewEl.style.transform = "scale(1.12)";
+        previewEl.style.borderColor = "var(--success)";
+        previewEl.style.boxShadow = "0 0 40px rgba(0, 255, 136, 0.85)";
+        setTimeout(() => {
+          previewEl.style.transform = "scale(1.0)";
+          previewEl.style.boxShadow = "none";
+        }, 600);
+      }
+    }
+
+    function updateCursor(xNorm, yNorm, isPinching, state) {
+      const screenX = xNorm * window.innerWidth;
+      const screenY = yNorm * window.innerHeight;
+      cursor.style.left = `${screenX}px`;
+      cursor.style.top = `${screenY}px`;
+      cursor.style.display = "block";
+
+      stateEl.textContent = state;
+      cursor.classList.toggle("pinching", isPinching);
+
+      // Hover Detection
+      const target = document.elementFromPoint(screenX, screenY);
+      document.querySelectorAll(".hovered").forEach(el => el.classList.remove("hovered"));
+      if (target && (target.classList.contains("btn") || target.classList.contains("category-btn") || target.classList.contains("nav-arrow"))) {
+        target.classList.add("hovered");
+      }
+    }
+
+    // --- MODE SWITCHER ---
+    function switchMode(mode) {
+      activeMode = mode;
+      document.getElementById("btn-mode-browser").classList.toggle("active", mode === "browser");
+      document.getElementById("btn-mode-ws").classList.toggle("active", mode === "ws");
+
+      if (mode === "browser") {
+        if (ws) {
+          ws.close();
+          ws = null;
+        }
+        cameraBanner.classList.remove("hidden");
+        pipContainer.style.display = "block";
+        statusText.textContent = "Browser Mode: Click Start Camera";
+        statusDot.className = "status-dot";
+      } else {
+        if (browserController) {
+          browserController.stop();
+        }
+        cameraBanner.classList.add("hidden");
+        pipContainer.style.display = "none";
+        connectWebSocket();
+      }
+    }
+
+    // --- BROWSER DIRECT ENGINE ---
+    async function startBrowserGestures() {
+      const btn = document.getElementById("btn-start-camera");
+      btn.disabled = true;
+      btn.textContent = "Starting...";
+
+      try {
+        if (!browserController) {
+          browserController = new TouchlessWebController({
+            previewCanvas: previewCanvas,
+            drawSkeleton: true,
+            onStatus: ({ status, message }) => {
+              statusText.textContent = message;
+              if (status === "loading" || status === "camera") {
+                statusDot.className = "status-dot loading";
+              } else if (status === "active") {
+                statusDot.className = "status-dot connected";
+                cameraBanner.classList.add("hidden");
+                appendLog("ACTIVE", "MediaPipe Wasm Loaded & Running", "hold");
+              } else if (status === "error") {
+                statusDot.className = "status-dot";
+                appendLog("ERROR", message, "click");
+              }
+            },
+            onUpdate: (event) => {
+              if (activeMode !== "browser") return;
+              updateCursor(event.cursor.x, event.cursor.y, event.pinchRatio < 0.28, event.state);
+              if (event.fps) {
+                const lockBadge = event.isLocked ? `🔒 Locked (${event.zoom.toFixed(1)}x)` : `1.0x`;
+                statusText.textContent = `Live: ${event.fps} FPS • ${lockBadge}`;
+              }
+            },
+            onGesture: (event) => {
+              if (activeMode !== "browser") return;
+              handleGestureAction(event.action, event.cursor);
+            }
+          });
+        }
+
+        await browserController.start();
+      } catch (err) {
+        console.error(err);
+        btn.disabled = false;
+        btn.textContent = "Retry Camera";
+      }
+    }
+
+    let autoZoomActive = true;
+    function toggleAutoZoom() {
+      autoZoomActive = !autoZoomActive;
+      const btn = document.getElementById("btn-autozoom");
+      btn.textContent = autoZoomActive ? "🎯 Hand Lock: ON" : "🔍 Hand Lock: OFF";
+      btn.style.color = autoZoomActive ? "#00e5ff" : "var(--text-muted)";
+      btn.style.borderColor = autoZoomActive ? "var(--accent)" : "var(--card-border)";
+      if (browserController) {
+        browserController.setAutoZoom(autoZoomActive);
+      }
+    }
+
+    // --- PYTHON WEBSOCKET BRIDGE FALLBACK ---
+    function connectWebSocket() {
+      statusText.textContent = "Connecting to ws://127.0.0.1:8765...";
+      statusDot.className = "status-dot loading";
+
       ws = new WebSocket("ws://127.0.0.1:8765");
 
       ws.onopen = () => {
-        statusDot.classList.add("connected");
-        statusText.textContent = "Live: ws://127.0.0.1:8765";
-        cursor.style.display = "block";
-        appendLog("CONNECTED", "Python Gesture Bridge Ready", "hold");
+        if (activeMode !== "ws") return;
+        statusDot.className = "status-dot connected";
+        statusText.textContent = "Live: ws://127.0.0.1:8765 (Python)";
+        appendLog("CONNECTED", "Python Bridge Connected", "hold");
       };
 
       ws.onclose = () => {
-        statusDot.classList.remove("connected");
-        statusText.textContent = "Reconnecting to ws://127.0.0.1:8765...";
+        if (activeMode !== "ws") return;
+        statusDot.className = "status-dot";
+        statusText.textContent = "Python Bridge Offline (Retrying...)";
         cursor.style.display = "none";
-        setTimeout(connectBridge, 2000);
+        setTimeout(() => {
+          if (activeMode === "ws") connectWebSocket();
+        }, 3000);
       };
 
       ws.onmessage = (e) => {
+        if (activeMode !== "ws") return;
         try {
           const data = JSON.parse(e.data);
-
-          // Continuous Cursor Position Update
           if (data.type === "cursor") {
-            const screenX = data.cursor.x * window.innerWidth;
-            const screenY = data.cursor.y * window.innerHeight;
-            cursor.style.left = `${screenX}px`;
-            cursor.style.top = `${screenY}px`;
-
-            stateEl.textContent = data.state;
-            cursor.classList.toggle("pinching", data.pinch_ratio < 0.28);
-            cursor.classList.toggle("holding", data.state === "HOLD");
-
-            // Element Hover Detection
-            const target = document.elementFromPoint(screenX, screenY);
-            document.querySelectorAll(".hovered").forEach(el => el.classList.remove("hovered"));
-            if (target && (target.classList.contains("btn") || target.classList.contains("category-btn"))) {
-              target.classList.add("hovered");
-            }
+            updateCursor(data.cursor.x, data.cursor.y, data.pinch_ratio < 0.28, data.state);
           }
-
-          // Discrete Gesture Actions
           if (data.type === "gesture") {
-            const act = data.action;
-            bannerNotice(act);
-
-            if (act === "SWIPE_LEFT") {
-              nextProduct();
-              appendLog("SWIPE_LEFT", "Next garment", "swipe");
-            } else if (act === "SWIPE_RIGHT") {
-              prevProduct();
-              appendLog("SWIPE_RIGHT", "Previous garment", "swipe");
-            } else if (act === "SWIPE_DOWN") {
-              setCategory(currentCategory + 1);
-              appendLog("SWIPE_DOWN", "Next category", "swipe");
-            } else if (act === "SWIPE_UP") {
-              setCategory(currentCategory - 1);
-              appendLog("SWIPE_UP", "Previous category", "swipe");
-            } else if (act === "CLICK") {
-              const screenX = data.cursor.x * window.innerWidth;
-              const screenY = data.cursor.y * window.innerHeight;
-              const target = document.elementFromPoint(screenX, screenY);
-              if (target && typeof target.click === "function") {
-                target.click();
-              }
-              appendLog("CLICK", `Triggered at (${Math.round(screenX)}, ${Math.round(screenY)})`, "click");
-            } else if (act === "DRAG_MOVE") {
-              rotationDeg = (rotationDeg + 8) % 360;
-              previewEl.style.transform = `scale(1.08) rotate(${rotationDeg}deg)`;
-              previewEl.classList.add("drag-active");
-              appendLog("DRAG_MOVE", `Rot: ${rotationDeg}°`, "drag");
-            } else if (act === "DRAG_END") {
-              previewEl.classList.remove("drag-active");
-            }
+            handleGestureAction(data.action, data.cursor);
           }
         } catch (err) {
-          console.error("WS parse error:", err);
+          console.error("WS error:", err);
         }
       };
     }
 
-    connectBridge();
+    // Auto-prompt browser gestures on load
+    window.addEventListener("DOMContentLoaded", () => {
+      // By default start in browser direct mode
+      switchMode("browser");
+    });
   </script>
 </body>
 </html>

@@ -150,13 +150,13 @@ class VirtualMirrorGestureFSM:
         def dist(a: Any, b: Any) -> float:
             return math.hypot(a.x - b.x, a.y - b.y)
 
-        index_extended = dist(w0, landmarks[8]) > dist(w0, landmarks[5]) * 1.3
+        index_extended = dist(w0, landmarks[8]) > dist(w0, landmarks[5]) * 1.15
         if not index_extended:
             return False
         curled = (
-            dist(w0, landmarks[12]) < dist(w0, landmarks[9]) * 1.15,   # middle
-            dist(w0, landmarks[16]) < dist(w0, landmarks[13]) * 1.15,  # ring
-            dist(w0, landmarks[20]) < dist(w0, landmarks[17]) * 1.15,  # pinky
+            dist(w0, landmarks[12]) < dist(w0, landmarks[9]) * 1.25,   # middle
+            dist(w0, landmarks[16]) < dist(w0, landmarks[13]) * 1.25,  # ring
+            dist(w0, landmarks[20]) < dist(w0, landmarks[17]) * 1.25,  # pinky
         )
         return sum(curled) >= 2
 
@@ -200,14 +200,12 @@ class VirtualMirrorGestureFSM:
         coplanar = depth_disparity <= 0.35
 
         # --- PALM VISIBILITY & BOUNDARY EXIT GATES ---
+        is_distant = palm_scale < 0.07
+
         # 1. Edge boundary guard: Hand near edges has unstable tracking or is entering/exiting.
-        #    Judged from the wrist/palm (w0, m9) only, not the fingertips (thumb/index) --
-        #    the index finger is *expected* to extend toward a screen edge while pointing
-        #    or swiping, and treating that as "the hand is leaving the frame" would wrongly
-        #    cancel genuine gestures (this was the root cause of scroll-down misfiring).
-        border_x = 0.06
-        border_y_top = 0.06
-        border_y_bottom = 0.12  # Generous bottom margin where hands enter/leave desk & lap
+        border_x = 0.05
+        border_y_top = 0.05
+        border_y_bottom = 0.10  # Generous bottom margin where hands enter/leave desk & lap
         is_near_edge = (
             w0.x < border_x or w0.x > (1.0 - border_x) or
             m9.x < border_x or m9.x > (1.0 - border_x) or
@@ -215,32 +213,37 @@ class VirtualMirrorGestureFSM:
             m9.y < border_y_top or m9.y > (1.0 - border_y_bottom)
         )
 
-        # 2. Minimum physical palm size: prevents dividing by near-zero if wrist is cut off.
-        #    Lowered from the original 0.06 to let click/hold/drag keep working further
-        #    from the camera; the pinch-confirmation-frames gate below compensates for
-        #    the extra landmark noise a smaller, more distant hand naturally has.
-        palm_size_ok = palm_scale >= 0.045
+        # 2. Minimum physical palm size: lowered from 0.045 to 0.015 so users can stand 2-4 meters away
+        palm_size_ok = palm_scale >= 0.015
 
         # 3. Palm facing camera check (rejects steep downward/forward tilt / foreshortening)
         tilt_ratio = palm_scale_2d / max(1e-4, palm_scale_3d)
-        tilt_ok = tilt_ratio >= 0.35
+        min_tilt = 0.20 if is_distant else 0.32
+        tilt_ok = tilt_ratio >= min_tilt
 
         # Pure palm visibility check:
-        # Hand is inside active boundaries, has sufficient physical size, and is facing the camera.
         palm_valid = (not is_near_edge) and palm_size_ok and tilt_ok
 
         # 4. Pinch-specific geometric guards:
-        # Only evaluated when fingers close together (pinch_ratio < pinch_engage_thresh).
-        # In a real pinch, thumb tip meets index tip in the same depth plane.
-        # When fingers are open, thumb is far from index, so do NOT apply this to an open hand!
+        # Distance-adaptive pinch thresholds
+        active_engage_thresh = (
+            min(0.36, self.pinch_engage_thresh + (0.07 - palm_scale) * 1.5)
+            if is_distant else self.pinch_engage_thresh
+        )
+        self._active_release_thresh = (
+            min(0.48, self.pinch_release_thresh + (0.07 - palm_scale) * 1.5)
+            if is_distant else self.pinch_release_thresh
+        )
+
         dist_t4_m9 = math.hypot(t4.x - m9.x, t4.y - m9.y)
         dist_t4_i8 = math.hypot(t4.x - i8.x, t4.y - i8.y)
-        thumb_not_tucked = (dist_t4_i8 < dist_t4_m9 * 1.25)
-        depth_coplanar = depth_disparity <= 0.35
+        thumb_not_tucked = (dist_t4_i8 < dist_t4_m9 * 1.35)
+        max_depth_disparity = 0.65 if is_distant else 0.38
+        depth_coplanar = depth_disparity <= max_depth_disparity
 
         pinch_valid_to_engage = (
             palm_valid and
-            (pinch_ratio < self.pinch_engage_thresh) and
+            (pinch_ratio < active_engage_thresh) and
             depth_coplanar and
             thumb_not_tucked
         )
@@ -340,7 +343,8 @@ class VirtualMirrorGestureFSM:
             dwell_progress = min(1.0, elapsed / self.hold_trigger_sec)
 
             # 1. Check for pinch release first (opening fingers after a valid pinch engagement)
-            if pinch_ratio > self.pinch_release_thresh:
+            release_thresh = getattr(self, "_active_release_thresh", self.pinch_release_thresh)
+            if pinch_ratio > release_thresh:
                 if self.click_min_sec <= elapsed < self.click_max_sec and disp_ratio < self.deadzone_palm_ratio:
                     action = "CLICK"
                 self.state = "HOVER"
@@ -368,7 +372,8 @@ class VirtualMirrorGestureFSM:
 
             dwell_progress = 1.0
 
-            if pinch_ratio > self.pinch_release_thresh or not palm_valid:
+            release_thresh = getattr(self, "_active_release_thresh", self.pinch_release_thresh)
+            if pinch_ratio > release_thresh or not palm_valid:
                 self.state = "HOVER"
                 action = "HOLD_END"
                 dwell_progress = 0.0
@@ -457,18 +462,18 @@ class VirtualMirrorGestureFSM:
             net_disp = math.hypot(dx, dy)
 
             # Gate 1: Scale-invariant and absolute displacement & velocity
-            if net_disp < self.swipe_min_screen_disp:
+            min_screen_disp = min(self.swipe_min_screen_disp, palm_scale * 0.70)
+            if net_disp < min_screen_disp:
                 continue
             velocity = net_disp / dt
-            if velocity < self.swipe_min_velocity:
+            min_velocity = min(self.swipe_min_velocity, palm_scale * 3.8)
+            if velocity < min_velocity:
                 continue
 
-            # Velocity-aware displacement/linearity floors: a short, fast flick is just
-            # as intentional as a slower full-arm swipe, but covers less physical
-            # distance and is noisier (raw, unfiltered m9 jitter), so require less
-            # displacement and tolerate less straightness the faster the stroke is.
-            frac = (velocity - self.swipe_min_velocity) / max(
-                1e-4, self.swipe_fast_velocity - self.swipe_min_velocity
+            # Velocity-aware displacement/linearity floors
+            fast_velocity = min(self.swipe_fast_velocity, min_velocity * 2.5)
+            frac = (velocity - min_velocity) / max(
+                1e-4, fast_velocity - min_velocity
             )
             frac = min(1.0, max(0.0, frac))
             required_disp = self.swipe_min_palm_disp - frac * (

@@ -75,35 +75,41 @@ To run without requiring a physical camera, or to tour through all 7 gestures au
 python3 main.py --mode demo
 ```
 
-### 4. Connect to Any Website / Webpage (WebSocket Bridge)
-The gesture engine runs a high-speed local WebSocket broadcast bridge on `ws://127.0.0.1:8765`:
-1. Start the gesture engine:
-   ```bash
-   python3 main.py
-   ```
-2. Open the included interactive touchless web interface in Chrome or Safari:
+### 4. Zero-Setup In-Browser Integration (100% Client-Side Wasm / No Python Needed!)
+Any user can visit your hosted website directly: the browser downloads the lightweight MediaPipe model (~2MB) into their local cache and runs the perception + kinematic FSM directly in JavaScript/WebAssembly:
+1. Open the web interface in any modern browser:
    ```bash
    open web_demo/index.html
    ```
-3. Use gestures to navigate:
-   - **Move Hand:** Drives smooth virtual cursor across the browser tab.
-   - **Pinch & Release:** Clicks buttons and garment cards in the browser.
-   - **Swipe Left / Right:** Flips through product carousel slides.
-   - **Scroll Up / Down:** Cycles through categories.
-   - **Pinch & Drag:** Rotates the 3D product view.
+2. Click **"Start Camera Gestures"** and grant camera permission.
+3. MediaPipe runs locally in the user's browser at 30-60 FPS with zero backend dependencies, zero installation, and complete video privacy.
 
-### 5. React / Next.js Integration (e.g., IRIS Frontend)
-Import the included React hook into your frontend component (e.g. `RealtimeTryOn.tsx`):
+### 5. Connect to Edge Hardware / Local Python Bridge (Optional)
+If running on a dedicated kiosk or Raspberry Pi smart mirror with a local Python daemon:
+1. Start the Python gesture engine:
+   ```bash
+   python3 main.py
+   ```
+2. In `web_demo/index.html`, toggle the top switch to **"🔌 Python Bridge (WS)"** to listen on `ws://127.0.0.1:8765`.
+
+### 6. React / Next.js Client-Side Hook (e.g., IRIS Frontend)
+Import the client-side React hook into any frontend component:
 ```tsx
-import { useGestureBridge } from "./useGestureBridge";
+import { useClientGesture } from "./useClientGesture";
 
 export function RealtimeTryOn() {
-  const { cursor, isConnected, lastAction } = useGestureBridge({
+  const { isActive, cursor, state, start, stop } = useClientGesture({
     onSwipeLeft: () => nextGarment(),
     onSwipeRight: () => prevGarment(),
     onSwipeDown: () => nextCategory(),
     onClick: (cursor) => triggerTryOn(cursor),
   });
+
+  return (
+    <div>
+      <button onClick={start}>Enable Touchless Gestures</button>
+    </div>
+  );
 }
 ```
 
